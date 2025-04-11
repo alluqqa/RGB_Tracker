@@ -1,0 +1,83 @@
+import cv2
+import numpy as np
+from ultralytics import YOLO
+import os
+
+# === Configurable parameters ===
+dot_radius = 4  # Size of the center dot
+dot_color_rgb = (255, 0, 0)  # Dot color in RGB (e.g., red)
+
+# Convert RGB to BGR for OpenCV drawing
+dot_color_bgr = (dot_color_rgb[2], dot_color_rgb[1], dot_color_rgb[0])
+
+# Print current directory for debugging paths
+print("Current working directory:", os.getcwd())
+
+# Load YOLOv8 model
+model = YOLO("yolov8n.pt")
+
+# Load video from file
+video_path = "Burger_video/burger.mp4"
+cap = cv2.VideoCapture(video_path)
+
+# Check if video opened
+if not cap.isOpened():
+    print(f"❌ Error: Could not open video file: {video_path}")
+    exit()
+
+# Function to calculate average BGR inside bounding box
+def average_bgr(image, box):
+    x1, y1, x2, y2 = map(int, box)
+    roi = image[y1:y2, x1:x2]
+    if roi.size == 0:
+        return (0, 0, 0)
+    mean_bgr = np.mean(roi.astype(np.float32), axis=(0, 1))
+    return tuple(map(int, mean_bgr))
+
+# Main loop
+while True:
+    ret, frame = cap.read()
+    if not ret:
+        print("✅ Video finished or failed to read frame.")
+        break
+
+    results = model(frame)[0]
+
+    for box in results.boxes:
+        x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+        w, h = x2 - x1, y2 - y1
+        area = w * h
+
+        # Filter 1: Keep boxes that are roughly square
+        if h == 0:
+            continue
+        ratio = w / h
+        if ratio < 0.75 or ratio > 1.3:
+            continue
+
+        # Filter 2: Ignore small boxes
+        if area < 5000:
+            continue
+
+        # Draw bounding box
+        cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2)
+
+        # Draw center dot
+        center_x = int((x1 + x2) / 2)
+        center_y = int((y1 + y2) / 2)
+        cv2.circle(frame, (center_x, center_y), dot_radius, dot_color_bgr, -1)
+
+        # Show average RGB
+        avg_bgr = average_bgr(frame, (x1, y1, x2, y2))
+        avg_rgb = (avg_bgr[2], avg_bgr[1], avg_bgr[0])
+        cv2.putText(frame, f"RGB{avg_rgb}", (int(x1), int(y1) - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+
+    # Display frame
+    cv2.imshow("Filtered Patty Detection", frame)
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+# Cleanup
+cap.release()
+cv2.destroyAllWindows()
